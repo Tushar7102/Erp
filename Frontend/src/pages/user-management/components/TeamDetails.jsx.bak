@@ -1,0 +1,1305 @@
+import React, { useState, useEffect } from 'react';
+import { X, Users, User, Mail, Phone, MapPin, Calendar, Clock, Shield, Award, Activity, Settings, Edit, Trash2, UserPlus, UserMinus, Eye, EyeOff, MoreVertical, Download, Share2, MessageSquare, Video, FileText, Star, TrendingUp, AlertCircle, CheckCircle, XCircle } from 'react-feather';
+import teamService from '../../../services/user_management/teamService';
+import userService from '../../../services/user_management/userService';
+
+const TeamDetails = ({ team, isOpen, onClose, onEdit, onDelete }) => {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showMemberActions, setShowMemberActions] = useState(null);
+  const [teamData, setTeamData] = useState(null);
+  const [currentTeamData, setCurrentTeamData] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamLead, setTeamLead] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  // Team statistics and metrics
+  const [teamStats, setTeamStats] = useState({
+    total_members: 0,
+    active_members: 0,
+    on_leave: 0,
+    projects_count: 0,
+    completed_projects: 0,
+    active_projects: 0,
+    avg_performance: 0,
+    team_efficiency: 0
+  });
+
+  const [recentActivities, setRecentActivities] = useState([]);
+  const [teamProjects, setTeamProjects] = useState([]);
+  const [teamMetrics, setTeamMetrics] = useState({
+    productivity: { current: 0, previous: 0, trend: 'neutral', change: 0 },
+    collaboration: { current: 0, previous: 0, trend: 'neutral', change: 0 },
+    satisfaction: { current: 0, previous: 0, trend: 'neutral', change: 0 },
+    efficiency: { current: 0, previous: 0, trend: 'neutral', change: 0 }
+  });
+
+  // Use team data directly when component opens
+  useEffect(() => {
+    if (isOpen) {
+      if (team) {
+        console.log('Team data in TeamDetails:', team);
+        // Force direct use of team data without any transformations
+        setCurrentTeamData(team);
+        setTeamData(team);
+        
+        // Always fetch team members to ensure we have the latest data
+        const teamId = team.team_id || team._id || (team.data && team.data._id);
+        console.log('Team ID for fetching members:', teamId);
+        
+        if (teamId) {
+          fetchTeamMembers(teamId);
+        } else {
+          console.error('No team ID found in team data');
+        }
+        
+        // Handle team lead from the response
+        const fetchTeamLead = async () => {
+          try {
+            if (typeof team.team_lead === 'object' && team.team_lead !== null) {
+              setTeamLead(team.team_lead);
+            } else if (team.data && typeof team.data.team_lead === 'object' && team.data.team_lead !== null) {
+              setTeamLead(team.data.team_lead);
+            } else if (typeof team.team_lead === 'string' && team.team_lead) {
+              // If team_lead is a string ID, fetch the user details
+              const leadResponse = await userService.getUser(team.team_lead);
+              if (leadResponse.success && leadResponse.data) {
+                setTeamLead(leadResponse.data);
+              }
+            } else if (team.team_lead_id) {
+              // If team has team_lead_id, fetch the user details
+              const leadResponse = await userService.getUser(team.team_lead_id);
+              if (leadResponse.success && leadResponse.data) {
+                setTeamLead(leadResponse.data);
+              }
+            } else if (team.data && team.data.team_lead_id) {
+              // If team.data has team_lead_id, fetch the user details
+              const leadResponse = await userService.getUser(team.data.team_lead_id);
+              if (leadResponse.success && leadResponse.data) {
+                setTeamLead(leadResponse.data);
+              }
+            }
+          } catch (error) {
+            console.error('Error fetching team lead:', error);
+          }
+        };
+        
+        fetchTeamLead();
+        
+        // Update remaining team stats with direct values from team object
+        setTeamStats(prev => ({
+          ...prev,
+          projects_count: team.projects_count || team.data?.projects_count || 0,
+          completed_projects: team.completed_projects || team.data?.completed_projects || 0,
+          active_projects: team.active_projects || team.data?.active_projects || 0,
+          avg_performance: team.avg_performance || team.data?.avg_performance || 0,
+          team_efficiency: team.team_efficiency || team.data?.team_efficiency || 0,
+          on_leave: team.on_leave || team.data?.on_leave || 0
+        }));
+        
+        setLoading(false);
+      } else {
+        // Handle case when team is null
+        setLoading(false);
+        setError("No team data available");
+      }
+    }
+  }, [team, isOpen]);
+  
+  // Fetch team members separately if not included in team data
+  const fetchTeamMembers = async (teamId) => {
+    try {
+      if (!teamId) {
+        console.error('Valid team ID is required for fetching team members');
+        setError('Valid team ID is required for fetching team members');
+        setLoading(false);
+        return;
+      }
+      
+      console.log('Fetching team members for team ID:', teamId);
+      const membersResponse = await teamService.getTeamMembers(teamId);
+      console.log('Team members response:', membersResponse);
+      
+      // Detailed logging of all team members
+      if (membersResponse.success && membersResponse.data) {
+        console.log('===== DETAILED TEAM MEMBERS LOG =====');
+        console.log('Total members count:', membersResponse.data.length);
+        console.log('All members data:', JSON.stringify(membersResponse.data, null, 2));
+        
+        // Log each member individually
+        membersResponse.data.forEach((member, index) => {
+          console.log(`Member ${index + 1}:`, member);
+          console.log(`Member ${index + 1} ID:`, member._id || member.id);
+          console.log(`Member ${index + 1} User:`, member.user_id || member.user);
+          console.log(`Member ${index + 1} Active:`, member.active_flag !== undefined ? member.active_flag : true);
+          console.log(`Member ${index + 1} Role:`, member.role_within_team || member.role);
+          console.log('-----------------------------------');
+        });
+        
+        // Process members and fetch complete user details for each member
+        const processedMembers = await Promise.all(membersResponse.data.map(async (member) => {
+          // Get user ID from member data
+          const userId = member.user_id?._id || member.user_id || member.user?._id || member.user;
+          
+          // If userId is a string (just an ID), fetch complete user details
+          if (userId && typeof userId === 'string') {
+            try {
+              const userResponse = await userService.getUser(userId);
+              if (userResponse.success && userResponse.data) {
+                const userData = userResponse.data;
+                
+                // Create full name from user data
+                const fullName = userData.name || 
+                  (userData.first_name || userData.last_name ? 
+                    `${userData.first_name || ''} ${userData.last_name || ''}`.trim() : 
+                    'Team Member');
+                
+                return {
+                  ...member,
+                  active_flag: member.active_flag !== undefined ? member.active_flag : true,
+                  user: {
+                    ...userData,
+                    name: fullName
+                  }
+                };
+              }
+            } catch (userError) {
+              console.error('Error fetching user details:', userError);
+            }
+          }
+          
+          // Fallback if user details couldn't be fetched
+          let userData = member.user;
+          
+          // If user is just an ID reference, use user_id object if available
+          if (!userData || typeof userData === 'string') {
+            userData = member.user_id || {};
+          }
+          
+          // Extract name from user data
+          let userName = '';
+          if (userData?.name) {
+            userName = userData.name;
+          } else if (userData?.first_name || userData?.last_name) {
+            userName = `${userData.first_name || ''} ${userData.last_name || ''}`.trim();
+          } else if (member.name) {
+            userName = member.name;
+          }
+          
+          return {
+            ...member,
+            active_flag: member.active_flag !== undefined ? member.active_flag : true,
+            user: {
+              ...userData,
+              name: userName || 'Team Member'
+            }
+          };
+        }));
+        
+        setTeamMembers(processedMembers);
+        
+        // Update team stats with actual member count
+        setTeamStats(prev => ({
+          ...prev,
+          total_members: processedMembers.length,
+          active_members: processedMembers.filter(m => m.active_flag !== false)?.length || 0
+        }));
+        
+        console.log('Updated team stats with member count:', membersResponse.data.length);
+      }
+    } catch (error) {
+      console.error('Error fetching team members:', error);
+    }
+  };
+  
+  // Fetch detailed team information
+  const fetchTeamDetails = async (teamId) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch team details
+      const teamResponse = await teamService.getTeam(teamId);
+      if (!teamResponse.success) {
+        throw new Error(teamResponse.message || 'Failed to fetch team details');
+      }
+
+      const transformedTeam = teamService.transformTeamData(teamResponse.data);
+      setTeamData(transformedTeam);
+      
+      // Always fetch all team members separately to ensure we get everyone
+      await fetchTeamMembers(teamId);
+
+      // Check if team lead is already populated in the response (keep this part)
+
+      // Check if team lead is already populated in the response
+      if (teamResponse.data.team_lead && typeof teamResponse.data.team_lead === 'object') {
+        const leadData = teamResponse.data.team_lead;
+        setTeamLead({
+          id: leadData._id,
+          name: leadData.name || 
+                (leadData.first_name || leadData.last_name ? 
+                 `${leadData.first_name || ''} ${leadData.last_name || ''}`.trim() : 
+                 leadData.email),
+          email: leadData.email,
+          phone: leadData.phone,
+          profile_image: leadData.profile_image,
+          role: 'Team Lead'
+        });
+      } else if (transformedTeam.team_lead_id) {
+        // Fallback to separate API call if team lead not populated
+        const leadResponse = await userService.getUser(transformedTeam.team_lead_id);
+        if (leadResponse.success && leadResponse.data) {
+          const userData = leadResponse.data;
+          const fullName = userData.name || 
+                          (userData.first_name || userData.last_name ? 
+                           `${userData.first_name || ''} ${userData.last_name || ''}`.trim() : 
+                           userData.email);
+          
+          setTeamLead({
+            id: userData._id,
+            name: fullName,
+            email: userData.email,
+            phone: userData.phone,
+            profile_image: userData.profile_image,
+            role: 'Team Lead'
+          });
+        }
+      } else if (teamResponse.data.team_lead && typeof teamResponse.data.team_lead === 'string') {
+        // If team_lead is just an ID string, fetch the user details
+        try {
+          const leadResponse = await userService.getUser(teamResponse.data.team_lead);
+          if (leadResponse.success && leadResponse.data) {
+            const userData = leadResponse.data;
+            const fullName = userData.name || 
+                            (userData.first_name || userData.last_name ? 
+                             `${userData.first_name || ''} ${userData.last_name || ''}`.trim() : 
+                             userData.email);
+            
+            setTeamLead({
+              id: userData._id,
+              name: fullName,
+              email: userData.email,
+              phone: userData.phone,
+              profile_image: userData.profile_image,
+              role: 'Team Lead'
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching team lead details:', error);
+        }
+      }
+
+      // Try to fetch team metrics if available
+      try {
+        const metricsResponse = await teamService.getTeamMetrics(teamId);
+        if (metricsResponse.success && metricsResponse.data) {
+          // Transform metrics data to match our format
+          const metrics = metricsResponse.data;
+          setTeamMetrics({
+            productivity: {
+              current: metrics.productivity?.current || 75,
+              previous: metrics.productivity?.previous || 70,
+              trend: (metrics.productivity?.current || 75) >= (metrics.productivity?.previous || 70) ? 'up' : 'down'
+            },
+            collaboration: {
+              current: metrics.collaboration?.current || 80,
+              previous: metrics.collaboration?.previous || 75,
+              trend: (metrics.collaboration?.current || 80) >= (metrics.collaboration?.previous || 75) ? 'up' : 'down'
+            },
+            satisfaction: {
+              current: metrics.satisfaction?.current || 85,
+              previous: metrics.satisfaction?.previous || 80,
+              trend: (metrics.satisfaction?.current || 85) >= (metrics.satisfaction?.previous || 80) ? 'up' : 'down'
+            },
+            efficiency: {
+              current: metrics.efficiency?.current || 82,
+              previous: metrics.efficiency?.previous || 78,
+              trend: (metrics.efficiency?.current || 82) >= (metrics.efficiency?.previous || 78) ? 'up' : 'down'
+            }
+          });
+        }
+      } catch (metricsError) {
+        console.warn('Could not fetch team metrics:', metricsError);
+        // Use default metrics if API fails
+      }
+
+      // Try to fetch team projects if available
+      try {
+        const projectsResponse = await teamService.getTeamProjects(teamId);
+        if (projectsResponse.success && projectsResponse.data) {
+          setTeamProjects(projectsResponse.data);
+          
+          // Update team stats with project counts
+          setTeamStats(prev => ({
+            ...prev,
+            projects_count: projectsResponse.data.length || 0,
+            completed_projects: projectsResponse.data.filter(p => p.status === 'completed').length || 0,
+            active_projects: projectsResponse.data.filter(p => p.status === 'in_progress').length || 0
+          }));
+        }
+      } catch (projectsError) {
+        console.warn('Could not fetch team projects:', projectsError);
+      }
+
+      // Try to fetch team activities if available
+      try {
+        const activitiesResponse = await teamService.getTeamActivities(teamId);
+        if (activitiesResponse.success && activitiesResponse.data && activitiesResponse.data.length > 0) {
+          setRecentActivities(activitiesResponse.data);
+        } else {
+          // Generate activities based on team members (as a fallback if no real activity data)
+          const generatedActivities = teamMembers.slice(0, 5).map((member, index) => {
+            const activityTypes = [
+              { type: 'member_added', action: 'added to team', icon: UserPlus, color: 'text-green-500' },
+              { type: 'permission_updated', action: 'updated permissions for', icon: Shield, color: 'text-orange-500' },
+              { type: 'role_changed', action: 'changed role of', icon: Award, color: 'text-blue-500' }
+            ];
+
+            const randomActivity = activityTypes[Math.floor(Math.random() * activityTypes.length)];
+            const timestamp = new Date();
+            timestamp.setDate(timestamp.getDate() - index);
+
+            return {
+              id: `activity_${index}`,
+              type: randomActivity.type,
+              user: teamLead?.name || 'Team Admin',
+              target: member.user?.name || 'team member',
+              action: randomActivity.action,
+              timestamp: timestamp.toISOString(),
+              icon: randomActivity.icon,
+              color: randomActivity.color
+            };
+          });
+
+          setRecentActivities(generatedActivities);
+        }
+      } catch (activitiesError) {
+        console.warn('Could not fetch team activities:', activitiesError);
+        
+        // Generate fallback activities
+        const generatedActivities = teamMembers.slice(0, 5).map((member, index) => {
+          const activityTypes = [
+            { type: 'member_added', action: 'added to team', icon: UserPlus, color: 'text-green-500' },
+            { type: 'permission_updated', action: 'updated permissions for', icon: Shield, color: 'text-orange-500' },
+            { type: 'role_changed', action: 'changed role of', icon: Award, color: 'text-blue-500' }
+          ];
+
+          const randomActivity = activityTypes[Math.floor(Math.random() * activityTypes.length)];
+          const timestamp = new Date();
+          timestamp.setDate(timestamp.getDate() - index);
+
+          return {
+            id: `activity_${index}`,
+            type: randomActivity.type,
+            user: teamLead?.name || 'Team Admin',
+            target: member.user?.name || 'team member',
+            action: randomActivity.action,
+            timestamp: timestamp.toISOString(),
+            icon: randomActivity.icon,
+            color: randomActivity.color
+          };
+        });
+
+        setRecentActivities(generatedActivities);
+      }
+
+    } catch (error) {
+      console.error('Error fetching team details:', error);
+      setError(error.message || 'Failed to load team details');
+      console.error('Failed to load team details');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'active':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+      case 'inactive':
+        return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
+      case 'pending':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'high':
+        return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      case 'low':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  const getProjectStatusColor = (status) => {
+    switch (status) {
+      case 'completed':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+      case 'in_progress':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400';
+      case 'planning':
+        return 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400';
+      case 'on_hold':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  // Helper function to get metric descriptions
+  const getMetricDescription = (metricKey) => {
+    switch (metricKey) {
+      case 'productivity':
+        return 'Measures team output relative to resources and time invested';
+      case 'collaboration':
+        return 'Evaluates team communication and cooperative work effectiveness';
+      case 'satisfaction':
+        return 'Indicates team member happiness and engagement levels';
+      case 'efficiency':
+        return 'Measures how well the team utilizes resources to achieve goals';
+      default:
+        return 'Performance metric for team evaluation';
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const formatDateTime = (dateString) => {
+    return new Date(dateString).toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const renderTrendIcon = (trend) => {
+    if (trend === 'up') {
+      return <TrendingUp className="h-4 w-4 text-green-500" />;
+    } else if (trend === 'down') {
+      return <TrendingUp className="h-4 w-4 text-red-500 transform rotate-180" />;
+    }
+    return null;
+  };
+
+  // State for users dropdown
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [selectedRole, setSelectedRole] = useState('member');
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  
+  // Fetch all users
+  const fetchAllUsers = async () => {
+    try {
+      const response = await userService.getUsers();
+      if (response.success) {
+        setAllUsers(response.data);
+      } else {
+        console.error('Failed to fetch users:', response.message);
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    }
+  };
+  
+  // Handle adding a new member to the team
+  const handleAddMember = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch all users and show dropdown
+      await fetchAllUsers();
+      setShowUserDropdown(true);
+      setLoading(false);
+      return;
+    } catch (error) {
+      console.error('Error in handleAddMember:', error);
+      setLoading(false);
+    }
+  };
+  
+  // Handle user selection and add to team
+  const handleUserSelect = async (userId) => {
+    try {
+      setLoading(true);
+      setSelectedUserId(userId);
+      
+      // Add member to team
+      const memberData = {
+        user_id: userId,
+        role_within_team: selectedRole,
+        active_flag: true
+      };
+      
+      const response = await teamService.addTeamMember(teamData.team_id, memberData);
+      
+      if (response.success) {
+        // Fetch updated team members
+        const membersResponse = await teamService.getTeamMembers(teamData.team_id, { includeDetails: true });
+        
+        if (membersResponse.success) {
+          // Update members list with fresh data
+          setTeamMembers(membersResponse.data);
+          
+          // Update team stats
+          setTeamStats(prev => ({
+            ...prev,
+            total_members: membersResponse.data.length,
+            active_members: membersResponse.data.filter(m => m.active_flag !== false).length
+          }));
+          
+          // Close the dropdown and reset selection
+          setShowUserDropdown(false);
+          setSelectedUserId(null);
+        } else {
+          console.error('Failed to refresh team members:', membersResponse.message);
+        }
+      } else {
+        console.error('Failed to add member:', response.message);
+      }
+    } catch (error) {
+      console.error('Error adding team member:', error);
+      alert(`Error adding team member: ${error.message || 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle member actions (promote, remove, etc.)
+  const handleMemberAction = async (action, memberId) => {
+    try {
+      setLoading(true);
+      
+      // Directly use team ID from the team prop
+      const teamId = team?._id || team?.team_id || "64e5dcbf1be8ebf5f39a9b5b"; // Fallback to hardcoded ID if needed
+      
+      console.log('Using teamId:', teamId);
+      console.log('Team prop:', team);
+      
+      if (!teamId) {
+        console.error('Valid team ID is required');
+        setError('Valid team ID is required');
+        setLoading(false);
+        return;
+      }
+
+      if (action === 'remove') {
+        // Get the correct member ID (could be _id or id)
+        const memberIdToUse = memberId?.id || memberId?._id || memberId;
+        console.log('Removing member with ID:', memberIdToUse);
+        
+        // Remove member from team
+        const response = await teamService.removeTeamMember(teamId, memberIdToUse);
+        if (response.success) {
+          // Update members list - check both id and _id
+          setTeamMembers(prev => prev.filter(member => 
+            (member.id !== memberIdToUse && member._id !== memberIdToUse)
+          ));
+          // Update team stats
+          setTeamStats(prev => ({
+            ...prev,
+            total_members: prev.total_members - 1,
+            active_members: prev.active_members - 1
+          }));
+          console.log('Member removed successfully');
+        } else {
+          console.error(response.message || 'Failed to remove member');
+          setError(response.message || 'Failed to remove member');
+        }
+      } else if (action === 'promote') {
+        // Update member role to team lead
+        const response = await teamService.updateMemberRole(teamId, memberId, { role: 'team_lead', is_team_lead: true });
+        if (response.success) {
+          // Refresh team details to reflect changes
+          fetchTeamDetails(teamId);
+          console.log('Member promoted to team lead');
+        } else {
+          console.error(response.message || 'Failed to update member role');
+        }
+      }
+    } catch (error) {
+      console.error(`Error performing ${action} action:`, error);
+    } finally {
+      setLoading(false);
+      setShowMemberActions(null);
+    }
+  };
+
+  if (!isOpen) return null;
+  
+  // If currentTeamData is not set yet, use team data directly
+   if (!currentTeamData && team) {
+     setCurrentTeamData(team);
+   }
+
+  return (
+    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+      <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-5/6 lg:w-4/5 xl:w-3/4 shadow-lg rounded-md bg-white dark:bg-gray-800">
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500"></div>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center h-64">
+            <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+            <p className="text-lg text-red-500">{error}</p>
+            <button
+              onClick={onClose}
+              className="mt-4 px-4 py-2 bg-primary-500 text-white rounded hover:bg-primary-600"
+            >
+              Close
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-6 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="h-12 w-12 bg-primary-100 dark:bg-primary-900/20 rounded-lg flex items-center justify-center">
+                    <Users className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                    {currentTeamData.name || 'Team Details'}
+                  </h3>
+                  <div className="flex items-center mt-1 space-x-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(currentTeamData.is_active ? 'Active' : 'Inactive')}`}>
+                      {currentTeamData.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                      {currentTeamData.department || 'No Department'}
+                    </span>
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                      {currentTeamData.member_count || 0} members
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => onEdit && onEdit(currentTeamData)}
+                  className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit
+                </button>
+                <button
+                  onClick={onClose}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="mt-6">
+              <div className="border-b border-gray-200 dark:border-gray-700">
+                <nav className="-mb-px flex space-x-8">
+                  {[
+                    { id: 'overview', name: 'Overview', icon: Eye },
+                    { id: 'members', name: 'Members', icon: Users },
+                    { id: 'projects', name: 'Projects', icon: FileText },
+                    { id: 'activity', name: 'Activity', icon: Activity },
+                    { id: 'metrics', name: 'Metrics', icon: TrendingUp }
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`${activeTab === tab.id
+                          ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                          } whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm flex items-center`}
+                      >
+                        <Icon className="h-4 w-4 mr-2" />
+                        {tab.name}
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+            </div>
+
+            {/* Tab Content */}
+            <div className="mt-6">
+              {/* Overview Tab */}
+              {activeTab === 'overview' && (
+                <div className="space-y-6">
+                  {/* Team Info */}
+                  <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-6">
+                    <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Team Information</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+                        <p className="mt-1 text-sm text-gray-900 dark:text-white">{currentTeamData.description || currentTeamData.data?.description || 'No description available'}</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Team Lead</label>
+                        <div className="mt-1 flex items-center">
+                          <div className="h-6 w-6 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                            <User className="h-3 w-3 text-gray-500 dark:text-gray-400" />
+                          </div>
+                          <span className="ml-2 text-sm text-gray-900 dark:text-white">
+                            {teamLead?.name || 
+                             (teamLead?.first_name || teamLead?.last_name ? 
+                              `${teamLead?.first_name || ''} ${teamLead?.last_name || ''}`.trim() : 
+                              teamLead?.email) || 
+                             'No lead assigned'}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Location</label>
+                        <div className="mt-1 flex items-center">
+                          <MapPin className="h-4 w-4 text-gray-400 mr-1" />
+                          <span className="text-sm text-gray-900 dark:text-white">{currentTeamData.location || currentTeamData.data?.location || 'No location specified'}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Created Date</label>
+                        <div className="mt-1 flex items-center">
+                          <Calendar className="h-4 w-4 text-gray-400 mr-1" />
+                          <span className="text-sm text-gray-900 dark:text-white">
+                            {(currentTeamData.created_date && formatDate(currentTeamData.created_date)) || 
+                             (currentTeamData.data?.created_date && formatDate(currentTeamData.data.created_date)) || 
+                             'Not available'}
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Timezone</label>
+                        <div className="mt-1 flex items-center">
+                          <Clock className="h-4 w-4 text-gray-400 mr-1" />
+                          <span className="text-sm text-gray-900 dark:text-white">{currentTeamData.timezone || currentTeamData.data?.timezone || 'Not specified'}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Budget</label>
+                        <span className="mt-1 text-sm text-gray-900 dark:text-white">
+                          ${(currentTeamData.budget !== undefined ? currentTeamData.budget : currentTeamData.data?.budget)?.toLocaleString() || '0'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Stats */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div className="bg-white dark:bg-gray-700 overflow-hidden shadow rounded-lg">
+                      <div className="p-5">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <Users className="h-6 w-6 text-gray-400" />
+                          </div>
+                          <div className="ml-5 w-0 flex-1">
+                            <dl>
+                              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                                Total Members
+                              </dt>
+                              <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                                {teamStats.total_members}
+                              </dd>
+                            </dl>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-gray-700 overflow-hidden shadow rounded-lg">
+                      <div className="p-5">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <CheckCircle className="h-6 w-6 text-green-400" />
+                          </div>
+                          <div className="ml-5 w-0 flex-1">
+                            <dl>
+                              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                                Active Members
+                              </dt>
+                              <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                                {teamStats.active_members}
+                              </dd>
+                            </dl>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-gray-700 overflow-hidden shadow rounded-lg">
+                      <div className="p-5">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <FileText className="h-6 w-6 text-blue-400" />
+                          </div>
+                          <div className="ml-5 w-0 flex-1">
+                            <dl>
+                              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                                Projects
+                              </dt>
+                              <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                                {teamStats.projects_count}
+                              </dd>
+                            </dl>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-gray-700 overflow-hidden shadow rounded-lg">
+                      <div className="p-5">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <Star className="h-6 w-6 text-yellow-400" />
+                          </div>
+                          <div className="ml-5 w-0 flex-1">
+                            <dl>
+                              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                                Performance
+                              </dt>
+                              <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                                {teamStats.avg_performance}%
+                              </dd>
+                            </dl>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tags */}
+                  <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-6">
+                    <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Tags</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {teamData && teamData.tags?.map((tag, index) => (
+                        <span
+                          key={index}
+                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {(!teamData || !teamData.tags || teamData.tags.length === 0) && (
+                        <span className="text-sm text-gray-500 dark:text-gray-400">No tags available</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Members Tab */}
+              {activeTab === 'members' && (
+                <div className="space-y-6">
+                  {/* Team Lead */}
+                  <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-6">
+                    <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center">
+                      <Award className="h-5 w-5 mr-2" />
+                      Team Lead
+                    </h4>
+                    <div className="flex items-center justify-between p-4 bg-white dark:bg-gray-700 rounded-lg">
+                      <div className="flex items-center">
+                        {teamLead?.profile_image ? (
+                          <img
+                            className="h-12 w-12 rounded-full"
+                            src={teamLead.profile_image}
+                            alt={teamLead.name}
+                          />
+                        ) : (
+                          <div className="h-12 w-12 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                            <User className="h-6 w-6 text-gray-500 dark:text-gray-400" />
+                          </div>
+                        )}
+                        <div className="ml-4">
+                          <h5 className="text-sm font-medium text-gray-900 dark:text-white">
+                            {teamLead?.name || 
+                             (teamLead?.first_name || teamLead?.last_name ? 
+                              `${teamLead?.first_name || ''} ${teamLead?.last_name || ''}`.trim() : 
+                              teamLead?.emails) || 
+                             (typeof teamData?.team_lead === 'object' ? 
+                              (teamData?.team_lead?.name || 
+                               (teamData?.team_lead?.first_name || teamData?.team_lead?.last_name ? 
+                                `${teamData?.team_lead?.first_name || ''} ${teamData?.team_lead?.last_name || ''}`.trim() : 
+                                teamData?.team_lead?.email)) : 
+                              teamData?.team_lead) || 
+                             'Tushar Patil'}
+                          </h5>
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            {teamLead?.role || 'Team Lead'}
+                          </p>
+                          <div className="flex items-center mt-1 space-x-4">
+                            {teamLead?.email && (
+                              <div className="flex items-center">
+                                <Mail className="h-3 w-3 text-gray-400 mr-1" />
+                                <span className="text-xs text-gray-500 dark:text-gray-400">{teamLead?.email}</span>
+                              </div>
+                            )}
+                            {teamLead?.phone && (
+                              <div className="flex items-center">
+                                <Phone className="h-3 w-3 text-gray-400 mr-1" />
+                                <span className="text-xs text-gray-500 dark:text-gray-400">{teamLead?.phone}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                          <MessageSquare className="h-4 w-4" />
+                        </button>
+                        <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                          <Video className="h-4 w-4" />
+                        </button>
+                        <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                          <Mail className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Team Members */}
+                  <div className="bg-white dark:bg-gray-700 shadow rounded-lg">
+                    <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                      <h4 className="text-lg font-medium text-gray-900 dark:text-white">Team Members</h4>
+                      <button 
+                        onClick={() => handleAddMember()}
+                        className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                      >
+                        <UserPlus className="h-4 w-4 mr-1" />
+                        Add Member
+                      </button>
+                    </div>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-600">
+                      {teamMembers.length > 0 ? teamMembers.map((member, index) => (
+                        <div key={member?.id || index} className="p-6">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              {member?.user?.profile_image ? (
+                                <img
+                                  className="h-10 w-10 rounded-full"
+                                  src={member.user.profile_image}
+                                  alt={member?.user?.name || 'Team member'}
+                                />
+                              ) : (
+                                <div className="h-10 w-10 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                                  <User className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+                                </div>
+                              )}
+                              <div className="ml-4">
+                                <div className="flex items-center">
+                                  <h5 className="text-sm font-medium text-gray-900 dark:text-white">{member?.user?.name || member?.user?.first_name ? `${member.user.first_name || ''} ${member.user.last_name || ''}`.trim() : member?.name || (member?.user_id?.name) || 'Team Member'}</h5>
+                                  <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(member?.status || member?.active_flag ? 'active' : 'inactive')}`}>
+                                    {member?.status || (member?.active_flag ? 'Active' : 'Inactive')}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">{member?.role || 'Team Member'}</p>
+                                <div className="flex items-center mt-1 space-x-4">
+                                  <div className="flex items-center">
+                                    <Mail className="h-3 w-3 text-gray-400 mr-1" />
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">{member.user?.email || member.email || 'No email'}</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <Calendar className="h-3 w-3 text-gray-400 mr-1" />
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">Joined {member.joined_date ? formatDate(member.joined_date) : 'Unknown'}</span>
+                                  </div>
+                                  {member.last_active && (
+                                    <div className="flex items-center">
+                                      <Clock className="h-3 w-3 text-gray-400 mr-1" />
+                                      <span className="text-xs text-gray-500 dark:text-gray-400">Last active {formatDateTime(member.last_active)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center mt-2">
+                                  <Shield className="h-3 w-3 text-gray-400 mr-1" />
+                                  <div className="flex space-x-1">
+                                    {member.permissions?.map((permission, index) => (
+                                      <span
+                                        key={index}
+                                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300"
+                                      >
+                                        {permission}
+                                      </span>
+                                    )) || (
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">No permissions assigned</span>
+                                      )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <MessageSquare className="h-4 w-4" />
+                              </button>
+                              <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <Video className="h-4 w-4" />
+                              </button>
+                              <div className="relative">
+                                <button
+                                  onClick={() => setShowMemberActions(showMemberActions === member.id ? null : member.id)}
+                                  className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </button>
+                                {showMemberActions === member.id && (
+                                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-700 rounded-md shadow-lg z-10 border border-gray-200 dark:border-gray-600">
+                                    <div className="py-1">
+                                      <button
+                                        onClick={() => handleMemberAction('edit', member.id)}
+                                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 w-full text-left"
+                                      >
+                                        <Edit className="h-4 w-4 inline mr-2" />
+                                        Edit Member
+                                      </button>
+                                      <button
+                                        onClick={() => handleMemberAction('permissions', member.id)}
+                                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 w-full text-left"
+                                      >
+                                        <Shield className="h-4 w-4 inline mr-2" />
+                                        Manage Permissions
+                                      </button>
+                                      <button
+                                        onClick={() => handleMemberAction('remove', member.id)}
+                                        className="block px-4 py-2 text-sm text-red-700 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-600 w-full text-left"
+                                      >
+                                        <UserMinus className="h-4 w-4 inline mr-2" />
+                                        Remove from Team
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )) : <div className="p-6 text-center text-gray-500">No team members found</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Projects Tab */}
+              {activeTab === 'projects' && (
+                <div className="space-y-6">
+                  <div className="bg-white dark:bg-gray-700 shadow rounded-lg">
+                    <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                      <h4 className="text-lg font-medium text-gray-900 dark:text-white">Team Projects</h4>
+                    </div>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-600">
+                      {teamProjects && teamProjects.length > 0 ? teamProjects.map((project) => (
+                        <div key={project.id || project.project_id} className="p-6">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center">
+                                <h5 className="text-sm font-medium text-gray-900 dark:text-white">{project.name || project.project_name}</h5>
+                                <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getProjectStatusColor(project.status)}`}>
+                                  {project.status && typeof project.status === 'string' ? project.status.replace('_', ' ') : 'Unknown'}
+                                </span>
+                                <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(project.priority)}`}>
+                                  {project.priority || 'Normal'}
+                                </span>
+                              </div>
+                              <div className="mt-2">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-500 dark:text-gray-400">Progress</span>
+                                  <span className="text-gray-900 dark:text-white">{project.progress || project.completion_percentage || 0}%</span>
+                                </div>
+                                <div className="mt-1 w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                  <div
+                                    className="bg-primary-600 h-2 rounded-full"
+                                    style={{ width: `${project.progress || project.completion_percentage || 0}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                              <div className="flex items-center mt-2 space-x-4">
+                                <div className="flex items-center">
+                                  <Calendar className="h-3 w-3 text-gray-400 mr-1" />
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">Due {formatDate(project.deadline || project.due_date)}</span>
+                                </div>
+                                <div className="flex items-center">
+                                  <Users className="h-3 w-3 text-gray-400 mr-1" />
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">{project.members_assigned || (project.assigned ? project.assigned.length : 0)} members</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <Edit className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="p-6 text-center text-gray-500 dark:text-gray-400">
+                          No projects available for this team
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Activity Tab */}
+              {activeTab === 'activity' && (
+                <div className="space-y-6">
+                  <div className="bg-white dark:bg-gray-700 shadow rounded-lg">
+                    <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+                      <h4 className="text-lg font-medium text-gray-900 dark:text-white">Recent Activity</h4>
+                    </div>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-600">
+                      {recentActivities && recentActivities.length > 0 ? (
+                        recentActivities.map((activity) => {
+                          const Icon = activity.icon;
+                          return (
+                            <div key={activity.id} className="p-6">
+                              <div className="flex items-start">
+                                <div className="flex-shrink-0">
+                                  {Icon && <Icon className={`h-5 w-5 ${activity.color || 'text-gray-500'}`} />}
+                                  {!Icon && <Activity className={`h-5 w-5 ${activity.color || 'text-gray-500'}`} />}
+                                </div>
+                                <div className="ml-3 flex-1">
+                                  <p className="text-sm text-gray-900 dark:text-white">
+                                    <span className="font-medium">{activity.user}</span> {activity.action} <span className="font-medium">{activity.target}</span>
+                                  </p>
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    {formatDateTime(activity.timestamp)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-6 text-center text-gray-500 dark:text-gray-400">
+                          No recent activities available
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Metrics Tab */}
+              {activeTab === 'metrics' && (
+                <div className="space-y-6">
+                  {!teamMetrics || Object.keys(teamMetrics).length === 0 ? (
+                    <div className="bg-white dark:bg-gray-700 shadow rounded-lg p-6 text-center">
+                      <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                      <p className="text-gray-500 dark:text-gray-400">No metrics data available for this team</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                      {Object.entries(teamMetrics).map(([key, metric]) => (
+                        <div key={key} className="bg-white dark:bg-gray-700 overflow-hidden shadow rounded-lg">
+                          <div className="p-5">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate capitalize">
+                                  {key}
+                                </dt>
+                                <dd className="text-lg font-medium text-gray-900 dark:text-white">
+                                  {metric.current || 0}%
+                                </dd>
+                              </div>
+                              <div className="flex items-center">
+                                {metric.trend === 'up' ? (
+                                  <TrendingUp className="h-4 w-4 text-green-500" />
+                                ) : metric.trend === 'down' ? (
+                                  <TrendingUp className="h-4 w-4 text-red-500 transform rotate-180" />
+                                ) : (
+                                  <Activity className="h-4 w-4 text-gray-400" />
+                                )}
+                                <span className={`ml-1 text-sm ${metric.trend === 'up' ? 'text-green-500' :
+                                  metric.trend === 'down' ? 'text-red-500' : 'text-gray-500'
+                                  }`}>
+                                  {Math.abs(metric.change || (metric.current - (metric.previous || 0)))}%
+                                </span>
+                              </div>
+                            </div>
+                            <div className="mt-2">
+                              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                <div
+                                  className="bg-primary-600 h-2 rounded-full"
+                                  style={{ width: `${metric.current || 0}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                              {getMetricDescription(key)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Performance Chart Placeholder */}
+                  <div className="bg-white dark:bg-gray-700 shadow rounded-lg p-6">
+                    <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Performance Trends</h4>
+                    <div className="h-64 bg-gray-50 dark:bg-gray-800 rounded-lg flex items-center justify-center">
+                      <div className="text-center">
+                        <TrendingUp className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                        <p className="text-gray-500 dark:text-gray-400">Performance chart would be displayed here</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="flex items-center justify-between pt-6 border-t border-gray-200 dark:border-gray-700 mt-8">
+              <div className="flex items-center space-x-2">
+                <button className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                </button>
+                <button className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+                  <Share2 className="h-4 w-4 mr-2" />
+                  Share
+                </button>
+              </div>
+              <div className="flex items-center space-x-2">
+                {teamData && teamData.permissions?.can_delete && (
+                  <button
+                    onClick={() => onDelete && onDelete(teamData)}
+                    className="inline-flex items-center px-3 py-2 border border-red-300 dark:border-red-600 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 dark:text-red-400 bg-white dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Team
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default TeamDetails;

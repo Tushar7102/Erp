@@ -22,7 +22,7 @@ const {
   searchSiteVisits
 } = require('../../controllers/profile/siteVisitSchedules');
 
-const SiteVisitSchedule = require('../../models/profile/SiteVisitSchedule');
+const SiteVisitSchedule = require('../../models/profile/siteVisitSchedule');
 
 // Include other resource routers
 const router = express.Router({ mergeParams: true });

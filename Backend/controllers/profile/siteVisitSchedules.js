@@ -1,6 +1,6 @@
 const ErrorResponse = require('../../utils/errorResponse');
 const asyncHandler = require('../../middleware/async');
-const SiteVisitSchedule = require('../../models/profile/SiteVisitSchedule');
+const SiteVisitSchedule = require('../../models/profile/siteVisitSchedule');
 const CustomerMaster = require('../../models/profile/CustomerMaster');
 const ProjectProfile = require('../../models/profile/ProjectProfile');
 const ProductProfile = require('../../models/profile/ProductProfile');

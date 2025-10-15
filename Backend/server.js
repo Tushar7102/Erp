@@ -77,7 +77,7 @@ app.use(cookieParser());
 
 // Enable CORS
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://erp-self-chi.vercel.app'],
+    origin: ['https://erp-lake-two.vercel.app', 'https://erp-self-chi.vercel.app'],
     credentials: true
 }));
 
